@@ -1,0 +1,18 @@
+# ============================================
+# INCLUDES DIRECTORY PROTECTION
+# ============================================
+#
+# Prevents direct web access to include files.
+# These files should only be included by PHP scripts.
+#
+# ============================================
+
+# Deny all access
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

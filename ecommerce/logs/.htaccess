@@ -1,0 +1,18 @@
+# ============================================
+# LOGS DIRECTORY PROTECTION
+# ============================================
+#
+# Prevents direct web access to log files.
+# Log files contain sensitive application data.
+#
+# ============================================
+
+# Deny all access
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>

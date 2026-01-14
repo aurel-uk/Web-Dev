@@ -1,0 +1,46 @@
+# ============================================
+# UPLOADS DIRECTORY SECURITY
+# ============================================
+#
+# Security settings for user-uploaded files.
+# Prevents PHP execution in uploads folder.
+#
+# ============================================
+
+# Disable PHP execution in this directory
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+
+# Alternative method for PHP-FPM
+<FilesMatch "\.php$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Only allow specific file types
+<FilesMatch "\.(?!(jpg|jpeg|png|gif|webp)$)[^.]+$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Prevent script execution via handler
+<IfModule mod_mime.c>
+    RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .phps .cgi .pl .asp .aspx .shtml .shtm .fcgi .fpl .jsp .htm .html .wml
+    RemoveType .php .phtml .php3 .php4 .php5 .php7 .phps .cgi .pl .asp .aspx .shtml .shtm .fcgi .fpl .jsp .htm .html .wml
+</IfModule>
+
+# Force download instead of execution
+<IfModule mod_headers.c>
+    Header set Content-Disposition "attachment"
+</IfModule>
