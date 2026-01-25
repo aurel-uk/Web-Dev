@@ -1,0 +1,428 @@
+{
+  "name": "Hotel Scheduled Stats Reports",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "daily-cron",
+      "name": "Daily Report (8 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 200],
+      "notes": "Triggers daily report at 8 AM local time"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "weekly-cron",
+      "name": "Weekly Report (Monday 9 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 400],
+      "notes": "Triggers weekly report every Monday at 9 AM"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  h.id as hotel_id,\n  h.name as hotel_name,\n  h.telegram_chat_id,\n  h.telegram_bot_token\nFROM hotels h\nWHERE h.is_active = true\n  AND h.telegram_chat_id IS NOT NULL",
+        "options": {}
+      },
+      "id": "get-active-hotels-daily",
+      "name": "Get Active Hotels (Daily)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [470, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Gets all active hotels for daily report"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  h.id as hotel_id,\n  h.name as hotel_name,\n  h.telegram_chat_id,\n  h.telegram_bot_token\nFROM hotels h\nWHERE h.is_active = true\n  AND h.telegram_chat_id IS NOT NULL",
+        "options": {}
+      },
+      "id": "get-active-hotels-weekly",
+      "name": "Get Active Hotels (Weekly)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [470, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Gets all active hotels for weekly report"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-daily",
+      "name": "Loop Hotels (Daily)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [690, 200],
+      "notes": "Processes each hotel one by one"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop-weekly",
+      "name": "Loop Hotels (Weekly)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [690, 400],
+      "notes": "Processes each hotel one by one"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  COALESCE(SUM(whatsapp_messages_received), 0) as whatsapp_messages,\n  COALESCE(SUM(phone_calls_received), 0) as phone_calls,\n  COALESCE(SUM(whatsapp_ai_handled + phone_ai_handled), 0) as ai_handled,\n  COALESCE(SUM(whatsapp_human_handled + phone_human_handled), 0) as human_handled,\n  COALESCE(SUM(total_handoffs), 0) as total_handoffs,\n  COALESCE(AVG(whatsapp_avg_response_time_ms), 0)::integer as avg_response_time\nFROM daily_statistics\nWHERE hotel_id = '{{ $json.hotel_id }}'\n  AND date = CURRENT_DATE - INTERVAL '1 day'",
+        "options": {}
+      },
+      "id": "get-yesterday-stats",
+      "name": "Get Yesterday Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [910, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches yesterday's statistics"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  COALESCE(SUM(whatsapp_messages_received), 0) as whatsapp_messages,\n  COALESCE(SUM(phone_calls_received), 0) as phone_calls,\n  COALESCE(SUM(whatsapp_ai_handled + phone_ai_handled), 0) as ai_handled,\n  COALESCE(SUM(whatsapp_human_handled + phone_human_handled), 0) as human_handled,\n  COALESCE(SUM(total_handoffs), 0) as total_handoffs,\n  COALESCE(SUM(handoffs_by_low_confidence), 0) as handoffs_confidence,\n  COALESCE(SUM(handoffs_by_complex_request), 0) as handoffs_complex,\n  COALESCE(SUM(handoffs_by_user_request), 0) as handoffs_user,\n  COALESCE(SUM(handoffs_by_angry_customer), 0) as handoffs_angry,\n  COALESCE(AVG(whatsapp_avg_response_time_ms), 0)::integer as avg_response_time,\n  COUNT(DISTINCT date) as days_with_data\nFROM daily_statistics\nWHERE hotel_id = '{{ $json.hotel_id }}'\n  AND date >= CURRENT_DATE - INTERVAL '7 days'",
+        "options": {}
+      },
+      "id": "get-last-week-stats",
+      "name": "Get Last Week Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [910, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches last week's statistics"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format daily report\nconst hotel = $('Loop Hotels (Daily)').item.json;\nconst stats = $input.item.json;\n\nconst total = (stats.ai_handled || 0) + (stats.human_handled || 0);\nconst aiRate = total > 0 ? ((stats.ai_handled / total) * 100).toFixed(1) : '0';\nconst avgResponseSec = stats.avg_response_time ? (stats.avg_response_time / 1000).toFixed(1) : 'N/A';\n\nconst yesterday = new Date();\nyesterday.setDate(yesterday.getDate() - 1);\nconst dateStr = yesterday.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });\n\nconst message = `☀️ *Good Morning! Daily Report*\n\n🏨 *${hotel.hotel_name}*\n📅 ${dateStr}\n\n*Yesterday's Summary*\n\n💬 WhatsApp Messages: ${stats.whatsapp_messages || 0}\n📞 Phone Calls: ${stats.phone_calls || 0}\n📈 Total Interactions: ${(stats.whatsapp_messages || 0) + (stats.phone_calls || 0)}\n\n*Performance*\n🤖 AI Handled: ${stats.ai_handled || 0}\n👤 Human Handled: ${stats.human_handled || 0}\n📈 AI Success Rate: ${aiRate}%\n🔄 Handoffs: ${stats.total_handoffs || 0}\n⏱ Avg Response: ${avgResponseSec}s\n\n_Have a great day!_ ☕`;\n\nreturn {\n  json: {\n    ...hotel,\n    reportMessage: message\n  }\n};"
+      },
+      "id": "format-daily-report",
+      "name": "Format Daily Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 200],
+      "notes": "Formats daily report message"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format weekly report with comparison\nconst hotel = $('Loop Hotels (Weekly)').item.json;\nconst stats = $input.item.json;\n\nconst total = (stats.ai_handled || 0) + (stats.human_handled || 0);\nconst aiRate = total > 0 ? ((stats.ai_handled / total) * 100).toFixed(1) : '0';\nconst avgResponseSec = stats.avg_response_time ? (stats.avg_response_time / 1000).toFixed(1) : 'N/A';\n\nconst today = new Date();\nconst weekStart = new Date(today);\nweekStart.setDate(today.getDate() - 7);\n\nconst dateRange = `${weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} - ${new Date(today.setDate(today.getDate() - 1)).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;\n\nconst message = `📊 *Weekly Performance Report*\n\n🏨 *${hotel.hotel_name}*\n📅 ${dateRange}\n\n*Communication Volume*\n💬 WhatsApp Messages: ${stats.whatsapp_messages || 0}\n📞 Phone Calls: ${stats.phone_calls || 0}\n📈 Total Interactions: ${(stats.whatsapp_messages || 0) + (stats.phone_calls || 0)}\n\n*Automation Performance*\n🤖 AI Handled: ${stats.ai_handled || 0}\n👤 Human Handled: ${stats.human_handled || 0}\n📈 AI Success Rate: ${aiRate}%\n\n*Handoff Analysis*\n🔄 Total Handoffs: ${stats.total_handoffs || 0}\n  📉 Low Confidence: ${stats.handoffs_confidence || 0}\n  🔧 Complex Request: ${stats.handoffs_complex || 0}\n  👋 User Requested: ${stats.handoffs_user || 0}\n  😤 Upset Customer: ${stats.handoffs_angry || 0}\n\n*Response Time*\n⏱ Avg Response: ${avgResponseSec}s\n\n*Activity*\n📆 Days with data: ${stats.days_with_data || 0}/7\n\n_Here's to another great week!_ 🎯`;\n\nreturn {\n  json: {\n    ...hotel,\n    reportMessage: message\n  }\n};"
+      },
+      "id": "format-weekly-report",
+      "name": "Format Weekly Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1130, 400],
+      "notes": "Formats weekly report with breakdown"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.reportMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-daily-report",
+      "name": "Send Daily Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1350, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends daily report to hotel owner"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.reportMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-weekly-report",
+      "name": "Send Weekly Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1350, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends weekly report to hotel owner"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_logs (\n  hotel_id, log_level, source, message, created_at\n) VALUES (\n  '{{ $json.hotel_id }}',\n  'info',\n  'scheduled_report',\n  'Daily report sent to Telegram',\n  NOW()\n)",
+        "options": {}
+      },
+      "id": "log-daily-sent",
+      "name": "Log Daily Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1570, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Logs successful daily report delivery"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_logs (\n  hotel_id, log_level, source, message, created_at\n) VALUES (\n  '{{ $json.hotel_id }}',\n  'info',\n  'scheduled_report',\n  'Weekly report sent to Telegram',\n  NOW()\n)",
+        "options": {}
+      },
+      "id": "log-weekly-sent",
+      "name": "Log Weekly Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1570, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Logs successful weekly report delivery"
+    }
+  ],
+  "connections": {
+    "Daily Report (8 AM)": {
+      "main": [
+        [
+          {
+            "node": "Get Active Hotels (Daily)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Report (Monday 9 AM)": {
+      "main": [
+        [
+          {
+            "node": "Get Active Hotels (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Hotels (Daily)": {
+      "main": [
+        [
+          {
+            "node": "Loop Hotels (Daily)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Hotels (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Loop Hotels (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Hotels (Daily)": {
+      "main": [
+        [
+          {
+            "node": "Get Yesterday Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Loop Hotels (Weekly)": {
+      "main": [
+        [
+          {
+            "node": "Get Last Week Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Yesterday Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Last Week Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Send Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Log Daily Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Log Weekly Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Daily Report": {
+      "main": [
+        [
+          {
+            "node": "Loop Hotels (Daily)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Weekly Report": {
+      "main": [
+        [
+          {
+            "node": "Loop Hotels (Weekly)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "",
+    "timezone": "Europe/Tirane"
+  },
+  "staticData": null,
+  "meta": {
+    "templateId": "hotel-scheduled-reports",
+    "instanceId": ""
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hotel-automation"
+    },
+    {
+      "name": "scheduled"
+    },
+    {
+      "name": "reports"
+    }
+  ]
+}

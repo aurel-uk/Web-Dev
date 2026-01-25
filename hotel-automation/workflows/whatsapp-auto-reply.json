@@ -1,0 +1,777 @@
+{
+  "name": "Hotel WhatsApp Auto-Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-webhook",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "WhatsApp Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "whatsapp-hotel-webhook",
+      "notes": "Receives incoming WhatsApp messages from Meta Cloud API or Twilio"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse incoming WhatsApp message (Meta Cloud API format)\nconst body = $input.item.json.body;\n\n// Handle webhook verification (Meta requires this)\nif ($input.item.json.query && $input.item.json.query['hub.mode'] === 'subscribe') {\n  return {\n    json: {\n      isVerification: true,\n      challenge: $input.item.json.query['hub.challenge']\n    }\n  };\n}\n\n// Parse the actual message\nlet messageData = {\n  isVerification: false,\n  hasMessage: false\n};\n\ntry {\n  const entry = body.entry?.[0];\n  const changes = entry?.changes?.[0];\n  const value = changes?.value;\n  \n  if (value?.messages && value.messages.length > 0) {\n    const message = value.messages[0];\n    const contact = value.contacts?.[0];\n    \n    messageData = {\n      isVerification: false,\n      hasMessage: true,\n      messageId: message.id,\n      timestamp: message.timestamp,\n      senderPhone: message.from,\n      senderName: contact?.profile?.name || 'Unknown',\n      messageType: message.type,\n      messageContent: message.text?.body || message.caption || '',\n      phoneNumberId: value.metadata?.phone_number_id,\n      hotelId: entry?.id || 'default', // Hotel ID from webhook config\n      rawPayload: body\n    };\n    \n    // Handle different message types\n    if (message.type === 'audio') {\n      messageData.audioId = message.audio?.id;\n      messageData.needsTranscription = true;\n    } else if (message.type === 'image') {\n      messageData.imageId = message.image?.id;\n      messageData.imageCaption = message.image?.caption || '';\n    }\n  }\n} catch (error) {\n  messageData.error = error.message;\n}\n\nreturn { json: messageData };"
+      },
+      "id": "parse-message",
+      "name": "Parse WhatsApp Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300],
+      "notes": "Extracts sender info, message content, and hotel ID from webhook payload"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isVerification }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-verification",
+      "name": "Is Verification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [690, 300],
+      "notes": "Meta requires webhook verification on setup"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.challenge }}"
+      },
+      "id": "respond-verification",
+      "name": "Respond to Verification",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [910, 200],
+      "notes": "Returns challenge token for Meta webhook verification"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.hasMessage }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-has-message",
+      "name": "Has Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [910, 400],
+      "notes": "Filter out status updates and non-message events"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  h.*,\n  COALESCE(wc.id, NULL) as conversation_id,\n  COALESCE(wc.detected_language, 'en') as previous_language,\n  COALESCE(wc.current_handler, 'ai') as current_handler,\n  COALESCE(wc.status, 'new') as conversation_status\nFROM hotels h\nLEFT JOIN whatsapp_conversations wc \n  ON wc.hotel_id = h.id \n  AND wc.phone_number = '{{ $json.senderPhone }}'\nWHERE h.id = '{{ $json.hotelId }}'\n   OR h.whatsapp_phone_id = '{{ $json.phoneNumberId }}'\nLIMIT 1",
+        "options": {}
+      },
+      "id": "get-hotel-config",
+      "name": "Get Hotel Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1130, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches hotel configuration and existing conversation context"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Merge message data with hotel configuration\nconst message = $('Parse WhatsApp Message').item.json;\nconst hotel = $input.item.json;\n\nreturn {\n  json: {\n    // Message data\n    messageId: message.messageId,\n    senderPhone: message.senderPhone,\n    senderName: message.senderName,\n    messageContent: message.messageContent,\n    messageType: message.messageType,\n    timestamp: message.timestamp,\n    \n    // Hotel data\n    hotelId: hotel.id,\n    hotelName: hotel.name,\n    confidenceThreshold: parseFloat(hotel.confidence_threshold) || 0.75,\n    staffWhatsApp: hotel.staff_whatsapp_number,\n    staffPhone: hotel.staff_phone_number,\n    whatsappAccessToken: hotel.whatsapp_access_token,\n    whatsappPhoneId: hotel.whatsapp_phone_id,\n    openaiApiKey: hotel.openai_api_key,\n    telegramBotToken: hotel.telegram_bot_token,\n    telegramChatId: hotel.telegram_chat_id,\n    \n    // Conversation context\n    conversationId: hotel.conversation_id,\n    previousLanguage: hotel.previous_language,\n    currentHandler: hotel.current_handler,\n    conversationStatus: hotel.conversation_status,\n    \n    // Processing flags\n    isNewConversation: !hotel.conversation_id,\n    isHandledByHuman: hotel.current_handler === 'human'\n  }\n};"
+      },
+      "id": "merge-context",
+      "name": "Merge Message & Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 400],
+      "notes": "Combines incoming message with hotel settings"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isHandledByHuman }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-human-handling",
+      "name": "Being Handled by Human?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1570, 400],
+      "notes": "Skip AI processing if conversation was handed to human"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Just log the message, don't process with AI\nINSERT INTO whatsapp_messages (\n  conversation_id, hotel_id, message_id, direction,\n  message_type, content, handled_by, created_at\n) VALUES (\n  '{{ $json.conversationId }}',\n  '{{ $json.hotelId }}',\n  '{{ $json.messageId }}',\n  'inbound',\n  '{{ $json.messageType }}',\n  '{{ $json.messageContent }}',\n  'human',\n  NOW()\n)",
+        "options": {}
+      },
+      "id": "log-human-message",
+      "name": "Log Message (Human Handling)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1790, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Log message without AI processing"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "You are a language detection and intent classification assistant for a hotel.\n\nAnalyze the following message and respond with a JSON object containing:\n1. \"language\": detected language code (\"sq\" for Albanian, \"en\" for English, \"it\" for Italian)\n2. \"intent\": the primary intent (one of: room_availability, room_booking, booking_modification, booking_cancellation, price_inquiry, special_pricing, group_reservation, amenities_info, location_directions, check_in_out, complaint, refund_request, human_request, greeting, thank_you, unknown)\n3. \"confidence\": confidence score from 0.0 to 1.0\n4. \"sentiment\": detected sentiment (positive, neutral, negative, angry)\n5. \"is_complex\": boolean, true if request requires human judgment\n6. \"wants_human\": boolean, true if user explicitly asks for human/receptionist/operator\n7. \"entities\": extracted entities like dates, room types, guest counts\n\nHuman request keywords to detect:\n- English: \"human\", \"person\", \"receptionist\", \"operator\", \"real person\", \"speak to someone\"\n- Albanian: \"njeri\", \"person\", \"recepsionist\", \"operator\", \"dua të flas me dikë\"\n- Italian: \"umano\", \"persona\", \"receptionist\", \"operatore\", \"parlare con qualcuno\"\n\nComplex requests that need human:\n- Complaints about service\n- Refund requests\n- Special pricing negotiations\n- Group bookings (5+ rooms)\n- Booking modifications\n- Angry or frustrated messages\n\nRespond ONLY with valid JSON, no other text.",
+              "role": "system"
+            },
+            {
+              "content": "=Message from customer:\n\"{{ $json.messageContent }}\"\n\nCustomer name: {{ $json.senderName }}\nPrevious detected language: {{ $json.previousLanguage }}",
+              "role": "user"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.1
+        }
+      },
+      "id": "detect-language-intent",
+      "name": "Detect Language & Intent",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1790, 500],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI API"
+        }
+      },
+      "notes": "Uses GPT to detect language, classify intent, and calculate confidence"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse AI analysis and determine next steps\nconst context = $('Merge Message & Config').item.json;\nconst aiResponse = $input.item.json.message?.content || $input.item.json;\n\nlet analysis;\ntry {\n  analysis = typeof aiResponse === 'string' ? JSON.parse(aiResponse) : aiResponse;\n} catch (e) {\n  analysis = {\n    language: 'en',\n    intent: 'unknown',\n    confidence: 0.5,\n    sentiment: 'neutral',\n    is_complex: true,\n    wants_human: false,\n    entities: {}\n  };\n}\n\n// Determine if handoff is needed\nconst confidenceThreshold = context.confidenceThreshold || 0.75;\nconst needsHandoff = \n  analysis.confidence < confidenceThreshold ||\n  analysis.is_complex === true ||\n  analysis.wants_human === true ||\n  analysis.sentiment === 'angry' ||\n  ['complaint', 'refund_request', 'human_request', 'booking_modification', \n   'special_pricing', 'group_reservation', 'unknown'].includes(analysis.intent);\n\n// Determine handoff reason\nlet handoffReason = null;\nif (needsHandoff) {\n  if (analysis.wants_human) handoffReason = 'user_requested';\n  else if (analysis.sentiment === 'angry') handoffReason = 'angry_customer';\n  else if (analysis.confidence < confidenceThreshold) handoffReason = 'low_confidence';\n  else if (analysis.is_complex) handoffReason = 'complex_request';\n  else handoffReason = 'intent_requires_human';\n}\n\nreturn {\n  json: {\n    ...context,\n    // AI Analysis\n    detectedLanguage: analysis.language,\n    intent: analysis.intent,\n    confidence: analysis.confidence,\n    sentiment: analysis.sentiment,\n    isComplex: analysis.is_complex,\n    wantsHuman: analysis.wants_human,\n    entities: analysis.entities,\n    \n    // Handoff decision\n    needsHandoff: needsHandoff,\n    handoffReason: handoffReason,\n    \n    // For next nodes\n    processedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "analyze-handoff",
+      "name": "Analyze Handoff Need",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 500],
+      "notes": "Determines if conversation should be handed to human based on AI analysis"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needsHandoff }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "needs-handoff",
+      "name": "Needs Human Handoff?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2230, 500],
+      "notes": "Routes to handoff flow or AI response flow"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "content": "=You are a friendly and professional hotel assistant for {{ $json.hotelName }}.\n\nIMPORTANT: Always respond in {{ $json.detectedLanguage === 'sq' ? 'Albanian' : $json.detectedLanguage === 'it' ? 'Italian' : 'English' }}.\n\nYour role:\n- Answer questions about the hotel (rooms, prices, amenities, location)\n- Help with simple booking inquiries\n- Provide check-in/check-out information\n- Be warm, helpful, and concise\n\nGuidelines:\n- Keep responses short (2-3 sentences max)\n- Be conversational and friendly\n- If you don't have specific information, offer to connect them with staff\n- Use appropriate greetings based on time of day\n- Never make up prices or availability - offer to check with reception\n\nHotel context:\n- Hotel Name: {{ $json.hotelName }}\n- Customer Language: {{ $json.detectedLanguage }}\n- Detected Intent: {{ $json.intent }}\n- Previous context: {{ $json.conversationStatus === 'new' ? 'New conversation' : 'Ongoing conversation' }}",
+              "role": "system"
+            },
+            {
+              "content": "=Customer message: \"{{ $json.messageContent }}\"",
+              "role": "user"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.7,
+          "maxTokens": 300
+        }
+      },
+      "id": "generate-ai-response",
+      "name": "Generate AI Response",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [2450, 600],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI API"
+        }
+      },
+      "notes": "Generates contextual response in customer's language"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.whatsappPhoneId }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Merge Message & Config').item.json.whatsappAccessToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"recipient_type\": \"individual\",\n  \"to\": \"{{ $('Merge Message & Config').item.json.senderPhone }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"preview_url\": false,\n    \"body\": {{ JSON.stringify($json.message?.content || $json.content || 'Thank you for your message. Our team will get back to you shortly.') }}\n  }\n}",
+        "options": {}
+      },
+      "id": "send-whatsapp-response",
+      "name": "Send WhatsApp Response",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2670, 600],
+      "notes": "Sends AI-generated response via WhatsApp Business API"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Prepare handoff notification message\nconst context = $input.item.json;\n\n// Generate handoff message based on language\nconst handoffMessages = {\n  sq: 'Faleminderit per mesazhin tuaj. Nje nga stafi yne do t\\'ju kontaktoje se shpejti.',\n  en: 'Thank you for your message. A member of our team will contact you shortly.',\n  it: 'Grazie per il tuo messaggio. Un membro del nostro team ti contatterà a breve.'\n};\n\nconst reasonMessages = {\n  user_requested: {\n    sq: 'Klienti kerkoi te flase me stafin',\n    en: 'Customer requested to speak with staff',\n    it: 'Il cliente ha richiesto di parlare con lo staff'\n  },\n  angry_customer: {\n    sq: 'Klient i pakënaqur - prioritet i lartë',\n    en: 'Upset customer - high priority',\n    it: 'Cliente insoddisfatto - alta priorità'\n  },\n  low_confidence: {\n    sq: 'AI nuk mund të kuptojë pyetjen',\n    en: 'AI could not understand the request',\n    it: 'AI non ha compreso la richiesta'\n  },\n  complex_request: {\n    sq: 'Kërkesë komplekse që kërkon staf',\n    en: 'Complex request requiring staff',\n    it: 'Richiesta complessa che richiede lo staff'\n  },\n  intent_requires_human: {\n    sq: 'Lloji i kërkesës kërkon staf',\n    en: 'Request type requires staff attention',\n    it: 'Tipo di richiesta richiede attenzione dello staff'\n  }\n};\n\nconst lang = context.detectedLanguage || 'en';\nconst reason = context.handoffReason || 'complex_request';\n\nreturn {\n  json: {\n    ...context,\n    customerReplyMessage: handoffMessages[lang] || handoffMessages.en,\n    staffNotificationMessage: `\n🚨 *New Handoff Required*\n\n🏨 *Hotel:* ${context.hotelName}\n📱 *Customer:* ${context.senderPhone}\n👤 *Name:* ${context.senderName}\n🌐 *Language:* ${lang.toUpperCase()}\n\n💬 *Message:*\n\"${context.messageContent}\"\n\n🎯 *Intent:* ${context.intent}\n📊 *Confidence:* ${(context.confidence * 100).toFixed(0)}%\n😊 *Sentiment:* ${context.sentiment}\n\n⚠️ *Reason:* ${reasonMessages[reason]?.[lang] || reasonMessages[reason]?.en || reason}\n\n⏰ *Time:* ${new Date().toLocaleString()}\n    `.trim()\n  }\n};"
+      },
+      "id": "prepare-handoff",
+      "name": "Prepare Handoff Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2450, 400],
+      "notes": "Prepares notification messages for staff in multiple languages"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.whatsappPhoneId }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.whatsappAccessToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"recipient_type\": \"individual\",\n  \"to\": \"{{ $json.senderPhone }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"preview_url\": false,\n    \"body\": \"{{ $json.customerReplyMessage }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "send-handoff-reply",
+      "name": "Send Handoff Reply to Customer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2670, 350],
+      "notes": "Informs customer that a human will respond"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegramChatId }}",
+        "text": "={{ $json.staffNotificationMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "notify-telegram",
+      "name": "Notify Staff via Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [2670, 250],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends handoff notification to hotel staff Telegram"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v18.0/{{ $json.whatsappPhoneId }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $json.whatsappAccessToken }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"recipient_type\": \"individual\",\n  \"to\": \"{{ $json.staffWhatsApp }}\",\n  \"type\": \"text\",\n  \"text\": {\n    \"preview_url\": false,\n    \"body\": \"{{ $json.staffNotificationMessage }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "forward-to-staff-whatsapp",
+      "name": "Forward to Staff WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2670, 450],
+      "notes": "Forwards conversation context to hotel staff WhatsApp"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Create or update conversation\nINSERT INTO whatsapp_conversations (\n  hotel_id, phone_number, customer_name, detected_language, \n  current_handler, status, started_at, last_message_at\n) VALUES (\n  '{{ $json.hotelId }}',\n  '{{ $json.senderPhone }}',\n  '{{ $json.senderName }}',\n  '{{ $json.detectedLanguage }}',\n  '{{ $json.needsHandoff ? 'human' : 'ai' }}',\n  '{{ $json.needsHandoff ? 'handed_off' : 'active' }}',\n  NOW(),\n  NOW()\n)\nON CONFLICT (hotel_id, phone_number) \nDO UPDATE SET\n  customer_name = EXCLUDED.customer_name,\n  detected_language = EXCLUDED.detected_language,\n  current_handler = EXCLUDED.current_handler,\n  status = EXCLUDED.status,\n  last_message_at = NOW()\nRETURNING id",
+        "options": {}
+      },
+      "id": "upsert-conversation",
+      "name": "Create/Update Conversation",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2890, 500],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Creates new conversation or updates existing one"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Get data from previous nodes\nconst context = $('Analyze Handoff Need').item.json;\nconst conversationResult = $input.item.json;\n\nreturn {\n  json: {\n    ...context,\n    dbConversationId: conversationResult.id || context.conversationId\n  }\n};"
+      },
+      "id": "get-conversation-id",
+      "name": "Get Conversation ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3110, 500],
+      "notes": "Extracts conversation ID for message logging"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Log the inbound message\nINSERT INTO whatsapp_messages (\n  conversation_id, hotel_id, message_id, direction,\n  message_type, content, detected_language, intent,\n  confidence_score, sentiment, handled_by, created_at, processed_at\n) VALUES (\n  '{{ $json.dbConversationId }}',\n  '{{ $json.hotelId }}',\n  '{{ $json.messageId }}',\n  'inbound',\n  '{{ $json.messageType }}',\n  '{{ $json.messageContent.replace(/'/g, \"''\") }}',\n  '{{ $json.detectedLanguage }}',\n  '{{ $json.intent }}',\n  {{ $json.confidence }},\n  '{{ $json.sentiment }}',\n  '{{ $json.needsHandoff ? 'human' : 'ai' }}',\n  NOW(),\n  NOW()\n)",
+        "options": {}
+      },
+      "id": "log-inbound-message",
+      "name": "Log Inbound Message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [3330, 500],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Saves message with AI analysis to database"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Analyze Handoff Need').item.json.needsHandoff }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-handoff-for-log",
+      "name": "Was Handoff?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [3550, 500],
+      "notes": "Check if we need to log handoff event"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO handoff_events (\n  hotel_id, source_type, source_id, reason, reason_details,\n  confidence_score, intent, customer_phone, customer_language,\n  conversation_summary, notification_sent, notification_channels,\n  status, created_at\n) VALUES (\n  '{{ $('Analyze Handoff Need').item.json.hotelId }}',\n  'whatsapp',\n  '{{ $('Get Conversation ID').item.json.dbConversationId }}',\n  '{{ $('Analyze Handoff Need').item.json.handoffReason }}',\n  'Intent: {{ $('Analyze Handoff Need').item.json.intent }}, Sentiment: {{ $('Analyze Handoff Need').item.json.sentiment }}',\n  {{ $('Analyze Handoff Need').item.json.confidence }},\n  '{{ $('Analyze Handoff Need').item.json.intent }}',\n  '{{ $('Analyze Handoff Need').item.json.senderPhone }}',\n  '{{ $('Analyze Handoff Need').item.json.detectedLanguage }}',\n  '{{ $('Analyze Handoff Need').item.json.messageContent.replace(/'/g, \"''\").substring(0, 500) }}',\n  true,\n  '[\"telegram\", \"whatsapp\"]',\n  'pending',\n  NOW()\n)",
+        "options": {}
+      },
+      "id": "log-handoff-event",
+      "name": "Log Handoff Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [3770, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Records handoff event for tracking and SLA"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\": \"success\", \"handled_by\": \"{{ $('Analyze Handoff Need').item.json.needsHandoff ? 'handoff' : 'ai' }}\"}"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3990, 500],
+      "notes": "Returns success response to webhook"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\": \"ignored\", \"reason\": \"no message\"}"
+      },
+      "id": "respond-no-message",
+      "name": "Respond No Message",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1130, 500],
+      "notes": "Returns response for non-message events"
+    },
+    {
+      "parameters": {},
+      "id": "noop-no-handoff",
+      "name": "No Handoff Logging Needed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [3770, 600],
+      "notes": "Continue to response"
+    }
+  ],
+  "connections": {
+    "WhatsApp Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Is Verification?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verification?": {
+      "main": [
+        [
+          {
+            "node": "Respond to Verification",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Has Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Message?": {
+      "main": [
+        [
+          {
+            "node": "Get Hotel Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond No Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Hotel Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Message & Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Message & Config": {
+      "main": [
+        [
+          {
+            "node": "Being Handled by Human?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Being Handled by Human?": {
+      "main": [
+        [
+          {
+            "node": "Log Message (Human Handling)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Detect Language & Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Language & Intent": {
+      "main": [
+        [
+          {
+            "node": "Analyze Handoff Need",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Handoff Need": {
+      "main": [
+        [
+          {
+            "node": "Needs Human Handoff?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Human Handoff?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Handoff Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Handoff Message": {
+      "main": [
+        [
+          {
+            "node": "Notify Staff via Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Handoff Reply to Customer",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Forward to Staff WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Response": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Response": {
+      "main": [
+        [
+          {
+            "node": "Create/Update Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Handoff Reply to Customer": {
+      "main": [
+        [
+          {
+            "node": "Create/Update Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Staff via Telegram": {
+      "main": []
+    },
+    "Forward to Staff WhatsApp": {
+      "main": []
+    },
+    "Create/Update Conversation": {
+      "main": [
+        [
+          {
+            "node": "Get Conversation ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Conversation ID": {
+      "main": [
+        [
+          {
+            "node": "Log Inbound Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Inbound Message": {
+      "main": [
+        [
+          {
+            "node": "Was Handoff?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Handoff?": {
+      "main": [
+        [
+          {
+            "node": "Log Handoff Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Handoff Logging Needed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Handoff Event": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Handoff Logging Needed": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "",
+    "timezone": "Europe/Tirane"
+  },
+  "staticData": null,
+  "meta": {
+    "templateId": "hotel-whatsapp-automation",
+    "instanceId": ""
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hotel-automation"
+    },
+    {
+      "name": "whatsapp"
+    },
+    {
+      "name": "production"
+    }
+  ]
+}
