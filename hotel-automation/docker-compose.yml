@@ -1,0 +1,129 @@
+version: '3.8'
+
+# ==============================================
+# HOTEL AUTOMATION SYSTEM - DOCKER COMPOSE
+# ==============================================
+# This setup includes:
+# - n8n (workflow automation)
+# - PostgreSQL (database)
+# - Redis (optional - for queue mode)
+# ==============================================
+
+services:
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: hotel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-hotel_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-HotelSecure2024!}
+      POSTGRES_DB: ${DB_NAME:-hotel_automation}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/seed-data.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-hotel_admin} -d ${DB_NAME:-hotel_automation}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hotel-network
+
+  # ============================================
+  # n8n Workflow Automation
+  # ============================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: hotel-n8n
+    restart: unless-stopped
+    environment:
+      # Basic Configuration
+      - N8N_HOST=${N8N_HOST:-0.0.0.0}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678}
+      - GENERIC_TIMEZONE=${TIMEZONE:-Europe/Tirane}
+
+      # Database Configuration (n8n internal DB)
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n_internal
+      - DB_POSTGRESDB_USER=${DB_USER:-hotel_admin}
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD:-HotelSecure2024!}
+
+      # Security
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-your-32-character-encryption-key!}
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-HotelAdmin2024!}
+
+      # Execution Settings
+      - EXECUTIONS_MODE=regular
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+
+      # Logging
+      - N8N_LOG_LEVEL=info
+
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/workflows:ro
+    ports:
+      - "5678:5678"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - hotel-network
+
+  # ============================================
+  # Redis (Optional - for queue mode scaling)
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: hotel-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hotel-network
+    profiles:
+      - with-redis
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  hotel-network:
+    driver: bridge
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+  n8n_data:
+    driver: local
+  redis_data:
+    driver: local
