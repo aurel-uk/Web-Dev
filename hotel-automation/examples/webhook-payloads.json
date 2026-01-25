@@ -1,0 +1,401 @@
+{
+  "_description": "Example webhook payloads for testing the hotel automation workflows",
+
+  "whatsapp": {
+    "incoming_text_message": {
+      "object": "whatsapp_business_account",
+      "entry": [
+        {
+          "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+          "changes": [
+            {
+              "value": {
+                "messaging_product": "whatsapp",
+                "metadata": {
+                  "display_phone_number": "15551234567",
+                  "phone_number_id": "PHONE_NUMBER_ID"
+                },
+                "contacts": [
+                  {
+                    "profile": {
+                      "name": "John Doe"
+                    },
+                    "wa_id": "16505551234"
+                  }
+                ],
+                "messages": [
+                  {
+                    "from": "16505551234",
+                    "id": "wamid.HBgLMTY1MDU1NTEyMzQVAgASGCA0MQ==",
+                    "timestamp": "1706190000",
+                    "text": {
+                      "body": "Hello, do you have any rooms available for this weekend?"
+                    },
+                    "type": "text"
+                  }
+                ]
+              },
+              "field": "messages"
+            }
+          ]
+        }
+      ]
+    },
+
+    "incoming_albanian_message": {
+      "object": "whatsapp_business_account",
+      "entry": [
+        {
+          "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+          "changes": [
+            {
+              "value": {
+                "messaging_product": "whatsapp",
+                "metadata": {
+                  "display_phone_number": "355691234567",
+                  "phone_number_id": "PHONE_NUMBER_ID"
+                },
+                "contacts": [
+                  {
+                    "profile": {
+                      "name": "Artan Hoxha"
+                    },
+                    "wa_id": "355692345678"
+                  }
+                ],
+                "messages": [
+                  {
+                    "from": "355692345678",
+                    "id": "wamid.HBgLMzU1NjkyMzQ1Njc4FQIASGBk",
+                    "timestamp": "1706190100",
+                    "text": {
+                      "body": "Mirëdita, a keni dhoma të lira për fundjavë?"
+                    },
+                    "type": "text"
+                  }
+                ]
+              },
+              "field": "messages"
+            }
+          ]
+        }
+      ]
+    },
+
+    "incoming_italian_message": {
+      "object": "whatsapp_business_account",
+      "entry": [
+        {
+          "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+          "changes": [
+            {
+              "value": {
+                "messaging_product": "whatsapp",
+                "metadata": {
+                  "display_phone_number": "390123456789",
+                  "phone_number_id": "PHONE_NUMBER_ID"
+                },
+                "contacts": [
+                  {
+                    "profile": {
+                      "name": "Marco Rossi"
+                    },
+                    "wa_id": "390987654321"
+                  }
+                ],
+                "messages": [
+                  {
+                    "from": "390987654321",
+                    "id": "wamid.HBgLMzkwOTg3NjU0MzIxFQIASGBk",
+                    "timestamp": "1706190200",
+                    "text": {
+                      "body": "Buongiorno, vorrei prenotare una camera doppia per il weekend"
+                    },
+                    "type": "text"
+                  }
+                ]
+              },
+              "field": "messages"
+            }
+          ]
+        }
+      ]
+    },
+
+    "human_request_message": {
+      "object": "whatsapp_business_account",
+      "entry": [
+        {
+          "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+          "changes": [
+            {
+              "value": {
+                "messaging_product": "whatsapp",
+                "metadata": {
+                  "display_phone_number": "15551234567",
+                  "phone_number_id": "PHONE_NUMBER_ID"
+                },
+                "contacts": [
+                  {
+                    "profile": {
+                      "name": "Jane Smith"
+                    },
+                    "wa_id": "16505559999"
+                  }
+                ],
+                "messages": [
+                  {
+                    "from": "16505559999",
+                    "id": "wamid.HBgLMTY1MDU1NTk5OTkVAgASGCA1MQ==",
+                    "timestamp": "1706190300",
+                    "text": {
+                      "body": "I need to speak with a human receptionist please"
+                    },
+                    "type": "text"
+                  }
+                ]
+              },
+              "field": "messages"
+            }
+          ]
+        }
+      ]
+    },
+
+    "complaint_message": {
+      "object": "whatsapp_business_account",
+      "entry": [
+        {
+          "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+          "changes": [
+            {
+              "value": {
+                "messaging_product": "whatsapp",
+                "metadata": {
+                  "display_phone_number": "15551234567",
+                  "phone_number_id": "PHONE_NUMBER_ID"
+                },
+                "contacts": [
+                  {
+                    "profile": {
+                      "name": "Angry Guest"
+                    },
+                    "wa_id": "16505558888"
+                  }
+                ],
+                "messages": [
+                  {
+                    "from": "16505558888",
+                    "id": "wamid.HBgLMTY1MDU1NTg4ODgVAgASGCA2MQ==",
+                    "timestamp": "1706190400",
+                    "text": {
+                      "body": "THIS IS UNACCEPTABLE! My room was dirty and the AC doesn't work!"
+                    },
+                    "type": "text"
+                  }
+                ]
+              },
+              "field": "messages"
+            }
+          ]
+        }
+      ]
+    },
+
+    "webhook_verification": {
+      "query": {
+        "hub.mode": "subscribe",
+        "hub.challenge": "1234567890",
+        "hub.verify_token": "your-verify-token"
+      }
+    },
+
+    "message_status_update": {
+      "object": "whatsapp_business_account",
+      "entry": [
+        {
+          "id": "WHATSAPP_BUSINESS_ACCOUNT_ID",
+          "changes": [
+            {
+              "value": {
+                "messaging_product": "whatsapp",
+                "metadata": {
+                  "display_phone_number": "15551234567",
+                  "phone_number_id": "PHONE_NUMBER_ID"
+                },
+                "statuses": [
+                  {
+                    "id": "wamid.HBgLMTY1MDU1NTEyMzQVAgASGCA0MQ==",
+                    "status": "delivered",
+                    "timestamp": "1706190500",
+                    "recipient_id": "16505551234"
+                  }
+                ]
+              },
+              "field": "messages"
+            }
+          ]
+        }
+      ]
+    }
+  },
+
+  "twilio_voice": {
+    "incoming_call_initial": {
+      "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "ApiVersion": "2010-04-01",
+      "CallSid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "CallStatus": "ringing",
+      "Called": "+15551234567",
+      "CalledCity": "Tirana",
+      "CalledCountry": "AL",
+      "CalledState": "",
+      "CalledZip": "",
+      "Caller": "+355692345678",
+      "CallerCity": "",
+      "CallerCountry": "AL",
+      "CallerState": "",
+      "CallerZip": "",
+      "Direction": "inbound",
+      "From": "+355692345678",
+      "FromCity": "",
+      "FromCountry": "AL",
+      "FromState": "",
+      "FromZip": "",
+      "To": "+15551234567",
+      "ToCity": "Tirana",
+      "ToCountry": "AL",
+      "ToState": "",
+      "ToZip": ""
+    },
+
+    "speech_result_english": {
+      "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "ApiVersion": "2010-04-01",
+      "CallSid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "CallStatus": "in-progress",
+      "Called": "+15551234567",
+      "Caller": "+16505551234",
+      "Direction": "inbound",
+      "From": "+16505551234",
+      "To": "+15551234567",
+      "SpeechResult": "I would like to book a room for two nights",
+      "Confidence": "0.91"
+    },
+
+    "speech_result_albanian": {
+      "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "ApiVersion": "2010-04-01",
+      "CallSid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "CallStatus": "in-progress",
+      "Called": "+355691234567",
+      "Caller": "+355692345678",
+      "Direction": "inbound",
+      "From": "+355692345678",
+      "To": "+355691234567",
+      "SpeechResult": "Dua të rezervoj një dhomë për dy netë",
+      "Confidence": "0.85"
+    },
+
+    "speech_result_human_request": {
+      "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "ApiVersion": "2010-04-01",
+      "CallSid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "CallStatus": "in-progress",
+      "Called": "+15551234567",
+      "Caller": "+16505559999",
+      "Direction": "inbound",
+      "From": "+16505559999",
+      "To": "+15551234567",
+      "SpeechResult": "I want to speak with a real person please",
+      "Confidence": "0.95"
+    },
+
+    "call_completed": {
+      "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "ApiVersion": "2010-04-01",
+      "CallSid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "CallStatus": "completed",
+      "CallDuration": "45",
+      "Called": "+15551234567",
+      "Caller": "+16505551234",
+      "Direction": "inbound",
+      "From": "+16505551234",
+      "To": "+15551234567"
+    }
+  },
+
+  "telegram": {
+    "stats_today_command": {
+      "update_id": 123456789,
+      "message": {
+        "message_id": 1234,
+        "from": {
+          "id": 987654321,
+          "is_bot": false,
+          "first_name": "Hotel",
+          "last_name": "Manager",
+          "username": "hotelmanager",
+          "language_code": "en"
+        },
+        "chat": {
+          "id": 987654321,
+          "first_name": "Hotel",
+          "last_name": "Manager",
+          "username": "hotelmanager",
+          "type": "private"
+        },
+        "date": 1706190600,
+        "text": "/stats_today"
+      }
+    },
+
+    "stats_week_command": {
+      "update_id": 123456790,
+      "message": {
+        "message_id": 1235,
+        "from": {
+          "id": 987654321,
+          "is_bot": false,
+          "first_name": "Hotel",
+          "last_name": "Manager",
+          "username": "hotelmanager",
+          "language_code": "en"
+        },
+        "chat": {
+          "id": 987654321,
+          "first_name": "Hotel",
+          "last_name": "Manager",
+          "username": "hotelmanager",
+          "type": "private"
+        },
+        "date": 1706190700,
+        "text": "/stats_week"
+      }
+    },
+
+    "pending_command": {
+      "update_id": 123456791,
+      "message": {
+        "message_id": 1236,
+        "from": {
+          "id": 987654321,
+          "is_bot": false,
+          "first_name": "Hotel",
+          "last_name": "Manager",
+          "username": "hotelmanager",
+          "language_code": "en"
+        },
+        "chat": {
+          "id": 987654321,
+          "first_name": "Hotel",
+          "last_name": "Manager",
+          "username": "hotelmanager",
+          "type": "private"
+        },
+        "date": 1706190800,
+        "text": "/pending"
+      }
+    }
+  }
+}

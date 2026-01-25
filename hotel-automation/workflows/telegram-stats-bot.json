@@ -1,0 +1,789 @@
+{
+  "name": "Hotel Telegram Statistics Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": ["message"],
+        "additionalFields": {}
+      },
+      "id": "telegram-trigger",
+      "name": "Telegram Bot Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Listens for commands from hotel staff"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse Telegram message and extract command\nconst message = $input.item.json.message;\n\nlet command = '';\nlet parameters = [];\n\nif (message.text) {\n  const parts = message.text.trim().split(/\\s+/);\n  command = parts[0].toLowerCase();\n  parameters = parts.slice(1);\n}\n\nreturn {\n  json: {\n    chatId: message.chat.id.toString(),\n    userId: message.from.id.toString(),\n    userName: message.from.first_name + (message.from.last_name ? ' ' + message.from.last_name : ''),\n    command: command,\n    parameters: parameters,\n    messageText: message.text,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "parse-telegram-command",
+      "name": "Parse Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300],
+      "notes": "Extracts command and parameters from message"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT h.*, hs.id as staff_id\nFROM hotels h\nJOIN hotel_staff hs ON hs.hotel_id = h.id\nWHERE hs.telegram_user_id = '{{ $json.userId }}'\n   OR h.telegram_chat_id = '{{ $json.chatId }}'\nLIMIT 1",
+        "options": {}
+      },
+      "id": "get-hotel-from-telegram",
+      "name": "Get Hotel by Telegram User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [690, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Identifies hotel based on Telegram user"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Merge command with hotel context\nconst cmd = $('Parse Command').item.json;\nconst hotel = $input.item.json;\n\nif (!hotel || !hotel.id) {\n  return {\n    json: {\n      ...cmd,\n      hotelId: null,\n      hotelName: null,\n      isAuthorized: false,\n      errorMessage: 'You are not authorized to access hotel statistics. Please contact your administrator.'\n    }\n  };\n}\n\nreturn {\n  json: {\n    ...cmd,\n    hotelId: hotel.id,\n    hotelName: hotel.name,\n    isAuthorized: true\n  }\n};"
+      },
+      "id": "merge-telegram-context",
+      "name": "Merge Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300],
+      "notes": "Combines command with hotel configuration"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isAuthorized }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-authorized",
+      "name": "Is Authorized?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1130, 300],
+      "notes": "Verify user is authorized for this hotel"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.errorMessage }}",
+        "additionalFields": {}
+      },
+      "id": "send-unauthorized",
+      "name": "Send Unauthorized",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1350, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends error message if not authorized"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "start"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "/help",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "help"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "/stats_today",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "stats_today"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "/stats_week",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "stats_week"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "/stats_month",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "stats_month"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": false
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.command }}",
+                    "rightValue": "/pending",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "pending"
+            }
+          ],
+          "fallbackOutput": {
+            "output": "extra"
+          }
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route-command",
+      "name": "Route Command",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1350, 400],
+      "notes": "Routes to appropriate handler based on command"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=👋 *Welcome to Hotel Stats Bot*\n\n🏨 *Hotel:* {{ $json.hotelName }}\n\nI can help you monitor your hotel's communication stats.\n\n*Available Commands:*\n/stats_today - Today's statistics\n/stats_week - This week's statistics\n/stats_month - This month's statistics\n/pending - Pending handoff requests\n/help - Show this help message\n\nSelect a command to get started!",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-start",
+      "name": "Send Start/Help",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1570, 280],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends welcome message with available commands"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=WITH today_stats AS (\n  SELECT \n    COALESCE(SUM(whatsapp_messages_received), 0) as wa_received,\n    COALESCE(SUM(whatsapp_messages_sent), 0) as wa_sent,\n    COALESCE(SUM(phone_calls_received), 0) as calls_received,\n    COALESCE(SUM(whatsapp_ai_handled), 0) as wa_ai,\n    COALESCE(SUM(whatsapp_human_handled), 0) as wa_human,\n    COALESCE(SUM(phone_ai_handled), 0) as call_ai,\n    COALESCE(SUM(phone_human_handled), 0) as call_human,\n    COALESCE(SUM(total_handoffs), 0) as handoffs,\n    language_distribution,\n    intent_distribution\n  FROM daily_statistics\n  WHERE hotel_id = '{{ $json.hotelId }}'\n    AND date = CURRENT_DATE\n  GROUP BY language_distribution, intent_distribution\n),\nrecent_intents AS (\n  SELECT intent, COUNT(*) as cnt\n  FROM whatsapp_messages\n  WHERE hotel_id = '{{ $json.hotelId }}'\n    AND created_at >= CURRENT_DATE\n    AND intent IS NOT NULL\n  GROUP BY intent\n  ORDER BY cnt DESC\n  LIMIT 5\n)\nSELECT \n  COALESCE(t.wa_received, 0) as whatsapp_messages,\n  COALESCE(t.wa_sent, 0) as whatsapp_responses,\n  COALESCE(t.calls_received, 0) as phone_calls,\n  COALESCE(t.wa_ai + t.call_ai, 0) as ai_handled,\n  COALESCE(t.wa_human + t.call_human, 0) as human_handled,\n  COALESCE(t.handoffs, 0) as total_handoffs,\n  COALESCE(t.language_distribution, '{\"sq\": 0, \"en\": 0, \"it\": 0}'::jsonb) as languages,\n  COALESCE(\n    (SELECT jsonb_object_agg(intent, cnt) FROM recent_intents),\n    '{}'::jsonb\n  ) as top_intents\nFROM (SELECT 1) dummy\nLEFT JOIN today_stats t ON true",
+        "options": {}
+      },
+      "id": "get-today-stats",
+      "name": "Get Today Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1570, 380],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches today's statistics from database"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format today's statistics for Telegram\nconst context = $('Merge Context').item.json;\nconst stats = $input.item.json;\n\nconst total = (stats.ai_handled || 0) + (stats.human_handled || 0);\nconst aiRate = total > 0 ? ((stats.ai_handled / total) * 100).toFixed(1) : '0';\n\n// Parse languages\nlet languages = stats.languages;\nif (typeof languages === 'string') {\n  try { languages = JSON.parse(languages); } catch(e) { languages = {}; }\n}\n\n// Parse top intents\nlet topIntents = stats.top_intents;\nif (typeof topIntents === 'string') {\n  try { topIntents = JSON.parse(topIntents); } catch(e) { topIntents = {}; }\n}\n\nconst intentsList = Object.entries(topIntents || {})\n  .sort((a, b) => b[1] - a[1])\n  .slice(0, 5)\n  .map(([intent, count]) => `  • ${intent}: ${count}`)\n  .join('\\n') || '  No data yet';\n\nconst message = `📊 *Today's Statistics*\n🏨 ${context.hotelName}\n📅 ${new Date().toLocaleDateString()}\n\n*WhatsApp Messages*\n📥 Received: ${stats.whatsapp_messages || 0}\n📤 Sent: ${stats.whatsapp_responses || 0}\n\n*Phone Calls*\n📞 Received: ${stats.phone_calls || 0}\n\n*Handling Performance*\n🤖 AI Handled: ${stats.ai_handled || 0}\n👤 Human Handled: ${stats.human_handled || 0}\n📈 AI Success Rate: ${aiRate}%\n🔄 Total Handoffs: ${stats.total_handoffs || 0}\n\n*Languages*\n🇦🇱 Albanian: ${languages.sq || 0}\n🇬🇧 English: ${languages.en || 0}\n🇮🇹 Italian: ${languages.it || 0}\n\n*Top Intents*\n${intentsList}`;\n\nreturn {\n  json: {\n    ...context,\n    statsMessage: message\n  }\n};"
+      },
+      "id": "format-today-stats",
+      "name": "Format Today Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 380],
+      "notes": "Formats statistics into readable Telegram message"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.statsMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-today-stats",
+      "name": "Send Today Stats",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [2010, 380],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends formatted today's statistics"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  COALESCE(SUM(whatsapp_messages_received), 0) as whatsapp_messages,\n  COALESCE(SUM(phone_calls_received), 0) as phone_calls,\n  COALESCE(SUM(whatsapp_ai_handled + phone_ai_handled), 0) as ai_handled,\n  COALESCE(SUM(whatsapp_human_handled + phone_human_handled), 0) as human_handled,\n  COALESCE(SUM(total_handoffs), 0) as total_handoffs,\n  COALESCE(AVG(whatsapp_avg_response_time_ms), 0)::integer as avg_response_time,\n  COUNT(DISTINCT date) as days_with_data\nFROM daily_statistics\nWHERE hotel_id = '{{ $json.hotelId }}'\n  AND date >= CURRENT_DATE - INTERVAL '7 days'",
+        "options": {}
+      },
+      "id": "get-week-stats",
+      "name": "Get Week Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1570, 480],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches this week's statistics"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format week statistics\nconst context = $('Merge Context').item.json;\nconst stats = $input.item.json;\n\nconst total = (stats.ai_handled || 0) + (stats.human_handled || 0);\nconst aiRate = total > 0 ? ((stats.ai_handled / total) * 100).toFixed(1) : '0';\nconst avgResponseSec = stats.avg_response_time ? (stats.avg_response_time / 1000).toFixed(1) : 'N/A';\n\nconst message = `📊 *This Week's Statistics*\n🏨 ${context.hotelName}\n📅 Last 7 Days\n\n*Communication Volume*\n💬 WhatsApp Messages: ${stats.whatsapp_messages || 0}\n📞 Phone Calls: ${stats.phone_calls || 0}\n📈 Total Interactions: ${(stats.whatsapp_messages || 0) + (stats.phone_calls || 0)}\n\n*Handling Performance*\n🤖 AI Handled: ${stats.ai_handled || 0}\n👤 Human Handled: ${stats.human_handled || 0}\n📈 AI Success Rate: ${aiRate}%\n🔄 Total Handoffs: ${stats.total_handoffs || 0}\n\n*Response Time*\n⏱ Avg Response: ${avgResponseSec}s\n\n*Coverage*\n📆 Days with activity: ${stats.days_with_data || 0}/7`;\n\nreturn {\n  json: {\n    ...context,\n    statsMessage: message\n  }\n};"
+      },
+      "id": "format-week-stats",
+      "name": "Format Week Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 480],
+      "notes": "Formats week statistics"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.statsMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-week-stats",
+      "name": "Send Week Stats",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [2010, 480],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends week statistics"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  COALESCE(SUM(whatsapp_messages_received), 0) as whatsapp_messages,\n  COALESCE(SUM(phone_calls_received), 0) as phone_calls,\n  COALESCE(SUM(whatsapp_ai_handled + phone_ai_handled), 0) as ai_handled,\n  COALESCE(SUM(whatsapp_human_handled + phone_human_handled), 0) as human_handled,\n  COALESCE(SUM(total_handoffs), 0) as total_handoffs,\n  COALESCE(SUM(handoffs_by_low_confidence), 0) as handoffs_confidence,\n  COALESCE(SUM(handoffs_by_complex_request), 0) as handoffs_complex,\n  COALESCE(SUM(handoffs_by_user_request), 0) as handoffs_user,\n  COALESCE(SUM(handoffs_by_angry_customer), 0) as handoffs_angry,\n  COALESCE(AVG(whatsapp_avg_response_time_ms), 0)::integer as avg_response_time,\n  COUNT(DISTINCT date) as days_with_data\nFROM daily_statistics\nWHERE hotel_id = '{{ $json.hotelId }}'\n  AND date >= DATE_TRUNC('month', CURRENT_DATE)",
+        "options": {}
+      },
+      "id": "get-month-stats",
+      "name": "Get Month Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1570, 580],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches this month's statistics"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format month statistics with breakdown\nconst context = $('Merge Context').item.json;\nconst stats = $input.item.json;\n\nconst total = (stats.ai_handled || 0) + (stats.human_handled || 0);\nconst aiRate = total > 0 ? ((stats.ai_handled / total) * 100).toFixed(1) : '0';\nconst avgResponseSec = stats.avg_response_time ? (stats.avg_response_time / 1000).toFixed(1) : 'N/A';\n\nconst monthName = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });\n\nconst message = `📊 *Monthly Statistics*\n🏨 ${context.hotelName}\n📅 ${monthName}\n\n*Communication Volume*\n💬 WhatsApp Messages: ${stats.whatsapp_messages || 0}\n📞 Phone Calls: ${stats.phone_calls || 0}\n📈 Total Interactions: ${(stats.whatsapp_messages || 0) + (stats.phone_calls || 0)}\n\n*Handling Performance*\n🤖 AI Handled: ${stats.ai_handled || 0}\n👤 Human Handled: ${stats.human_handled || 0}\n📈 AI Success Rate: ${aiRate}%\n\n*Handoff Breakdown*\n🔄 Total Handoffs: ${stats.total_handoffs || 0}\n  • Low Confidence: ${stats.handoffs_confidence || 0}\n  • Complex Request: ${stats.handoffs_complex || 0}\n  • User Requested: ${stats.handoffs_user || 0}\n  • Upset Customer: ${stats.handoffs_angry || 0}\n\n*Response Time*\n⏱ Avg Response: ${avgResponseSec}s\n\n*Coverage*\n📆 Days with activity: ${stats.days_with_data || 0}`;\n\nreturn {\n  json: {\n    ...context,\n    statsMessage: message\n  }\n};"
+      },
+      "id": "format-month-stats",
+      "name": "Format Month Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 580],
+      "notes": "Formats month statistics with handoff breakdown"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.statsMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-month-stats",
+      "name": "Send Month Stats",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [2010, 580],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends month statistics"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT \n  he.id,\n  he.source_type,\n  he.reason,\n  he.customer_phone,\n  he.customer_language,\n  he.intent,\n  he.confidence_score,\n  LEFT(he.conversation_summary, 100) as summary,\n  he.created_at\nFROM handoff_events he\nWHERE he.hotel_id = '{{ $json.hotelId }}'\n  AND he.status = 'pending'\nORDER BY he.created_at DESC\nLIMIT 10",
+        "options": {}
+      },
+      "id": "get-pending-handoffs",
+      "name": "Get Pending Handoffs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1570, 680],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches pending handoff requests"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Format pending handoffs list\nconst context = $('Merge Context').item.json;\nconst handoffs = $input.all();\n\nif (!handoffs || handoffs.length === 0 || !handoffs[0].json.id) {\n  return {\n    json: {\n      ...context,\n      pendingMessage: `✅ *No Pending Handoffs*\\n\\n🏨 ${context.hotelName}\\n\\nAll conversations are being handled. Great job! 👏`\n    }\n  };\n}\n\nlet handoffList = handoffs.map((h, i) => {\n  const data = h.json;\n  const time = new Date(data.created_at).toLocaleString();\n  const lang = data.customer_language?.toUpperCase() || '??';\n  const conf = data.confidence_score ? (data.confidence_score * 100).toFixed(0) + '%' : 'N/A';\n  \n  return `*${i + 1}. ${data.source_type === 'whatsapp' ? '💬' : '📞'} ${data.customer_phone}*\n   🌐 ${lang} | 🎯 ${data.intent || 'unknown'} | 📊 ${conf}\n   ⚠️ Reason: ${data.reason}\n   💬 \"${data.summary || 'No summary'}...\"\n   ⏰ ${time}`;\n}).join('\\n\\n');\n\nconst message = `🚨 *Pending Handoffs*\\n\\n🏨 ${context.hotelName}\\n📋 ${handoffs.length} pending request(s)\\n\\n${handoffList}`;\n\nreturn {\n  json: {\n    ...context,\n    pendingMessage: message\n  }\n};"
+      },
+      "id": "format-pending",
+      "name": "Format Pending List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1790, 680],
+      "notes": "Formats pending handoffs list"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.pendingMessage }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-pending",
+      "name": "Send Pending List",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [2010, 680],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Sends pending handoffs list"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "=❓ Unknown command: {{ $json.command }}\n\nType /help to see available commands.",
+        "additionalFields": {}
+      },
+      "id": "send-unknown",
+      "name": "Send Unknown Command",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [1570, 780],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Handles unknown commands"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO telegram_command_logs (\n  hotel_id, telegram_user_id, telegram_chat_id,\n  command, response_sent, created_at\n) VALUES (\n  {{ $json.hotelId ? \"'\" + $json.hotelId + \"'\" : 'NULL' }},\n  '{{ $json.userId }}',\n  '{{ $json.chatId }}',\n  '{{ $json.command }}',\n  true,\n  NOW()\n)",
+        "options": {}
+      },
+      "id": "log-command",
+      "name": "Log Command",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2230, 450],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Logs command usage for analytics"
+    }
+  ],
+  "connections": {
+    "Telegram Bot Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Command": {
+      "main": [
+        [
+          {
+            "node": "Get Hotel by Telegram User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Hotel by Telegram User": {
+      "main": [
+        [
+          {
+            "node": "Merge Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Context": {
+      "main": [
+        [
+          {
+            "node": "Is Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Authorized?": {
+      "main": [
+        [
+          {
+            "node": "Route Command",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Command": {
+      "main": [
+        [
+          {
+            "node": "Send Start/Help",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Start/Help",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Today Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Week Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Month Stats",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Pending Handoffs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unknown Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Today Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Today Stats": {
+      "main": [
+        [
+          {
+            "node": "Send Today Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Today Stats": {
+      "main": [
+        [
+          {
+            "node": "Log Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Week Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Week Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Week Stats": {
+      "main": [
+        [
+          {
+            "node": "Send Week Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Week Stats": {
+      "main": [
+        [
+          {
+            "node": "Log Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Month Stats": {
+      "main": [
+        [
+          {
+            "node": "Format Month Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Month Stats": {
+      "main": [
+        [
+          {
+            "node": "Send Month Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Month Stats": {
+      "main": [
+        [
+          {
+            "node": "Log Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Handoffs": {
+      "main": [
+        [
+          {
+            "node": "Format Pending List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Pending List": {
+      "main": [
+        [
+          {
+            "node": "Send Pending List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Pending List": {
+      "main": [
+        [
+          {
+            "node": "Log Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Start/Help": {
+      "main": [
+        [
+          {
+            "node": "Log Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "",
+    "timezone": "Europe/Tirane"
+  },
+  "staticData": null,
+  "meta": {
+    "templateId": "hotel-telegram-stats",
+    "instanceId": ""
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hotel-automation"
+    },
+    {
+      "name": "telegram"
+    },
+    {
+      "name": "statistics"
+    }
+  ]
+}

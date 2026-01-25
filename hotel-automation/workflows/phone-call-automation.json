@@ -1,0 +1,593 @@
+{
+  "name": "Hotel Phone Call Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio-voice-webhook",
+        "options": {
+          "rawBody": true
+        },
+        "responseMode": "responseNode"
+      },
+      "id": "voice-webhook",
+      "name": "Twilio Voice Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [250, 300],
+      "webhookId": "twilio-voice-hotel",
+      "notes": "Receives incoming phone calls from Twilio"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse Twilio voice webhook payload\nconst body = $input.item.json.body;\n\n// Twilio sends form data, parse it\nlet callData = {\n  callSid: body.CallSid,\n  callerNumber: body.From,\n  calledNumber: body.To,\n  callStatus: body.CallStatus,\n  direction: body.Direction || 'inbound',\n  \n  // Geographic info\n  fromCity: body.FromCity,\n  fromState: body.FromState,\n  fromCountry: body.FromCountry,\n  \n  // Speech recognition (if available)\n  speechResult: body.SpeechResult,\n  confidence: body.Confidence ? parseFloat(body.Confidence) : null,\n  \n  // Digit input (DTMF)\n  digits: body.Digits,\n  \n  // Recording info\n  recordingUrl: body.RecordingUrl,\n  recordingSid: body.RecordingSid,\n  \n  // Call tracking\n  isInitialCall: !body.SpeechResult && !body.Digits,\n  timestamp: new Date().toISOString()\n};\n\nreturn { json: callData };"
+      },
+      "id": "parse-call",
+      "name": "Parse Call Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [470, 300],
+      "notes": "Extracts call information from Twilio webhook"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT h.*\nFROM hotels h\nWHERE h.twilio_phone_number = '{{ $json.calledNumber }}'\n   OR h.twilio_phone_number LIKE '%' || RIGHT('{{ $json.calledNumber }}', 10)\nLIMIT 1",
+        "options": {}
+      },
+      "id": "get-hotel-voice",
+      "name": "Get Hotel Config",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [690, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Fetches hotel configuration based on called number"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Merge call data with hotel config\nconst call = $('Parse Call Data').item.json;\nconst hotel = $input.item.json;\n\nreturn {\n  json: {\n    ...call,\n    hotelId: hotel.id,\n    hotelName: hotel.name,\n    staffPhone: hotel.staff_phone_number,\n    confidenceThreshold: parseFloat(hotel.confidence_threshold) || 0.75,\n    telegramBotToken: hotel.telegram_bot_token,\n    telegramChatId: hotel.telegram_chat_id,\n    twilioAccountSid: hotel.twilio_account_sid,\n    twilioAuthToken: hotel.twilio_auth_token\n  }\n};"
+      },
+      "id": "merge-voice-context",
+      "name": "Merge Call & Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [910, 300],
+      "notes": "Combines call data with hotel settings"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isInitialCall }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "is-initial-call",
+      "name": "Is Initial Call?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1130, 300],
+      "notes": "Check if this is the first webhook (greeting) or follow-up (speech input)"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Generate TwiML for initial greeting in 3 languages\nconst hotel = $input.item.json;\n\nconst twiml = `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Gather input=\"speech\" language=\"sq-AL\" speechTimeout=\"3\" action=\"/webhook/twilio-voice-webhook\" method=\"POST\">\n    <Say language=\"sq-AL\" voice=\"Google.sq-AL-Standard-A\">\n      Mirësevini në ${hotel.hotelName}. Si mund t'ju ndihmojmë sot?\n    </Say>\n    <Pause length=\"1\"/>\n    <Say language=\"en-US\" voice=\"Google.en-US-Standard-C\">\n      Welcome to ${hotel.hotelName}. How can we help you today?\n    </Say>\n    <Pause length=\"1\"/>\n    <Say language=\"it-IT\" voice=\"Google.it-IT-Standard-A\">\n      Benvenuti a ${hotel.hotelName}. Come possiamo aiutarvi oggi?\n    </Say>\n  </Gather>\n  <Say language=\"en-US\">We didn't receive any input. Please call again.</Say>\n  <Hangup/>\n</Response>`;\n\nreturn {\n  json: {\n    ...hotel,\n    twimlResponse: twiml\n  }\n};"
+      },
+      "id": "generate-greeting",
+      "name": "Generate Greeting TwiML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1350, 200],
+      "notes": "Creates multilingual greeting with speech recognition"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO phone_calls (\n  hotel_id, twilio_call_sid, caller_number, status,\n  direction, handled_by, started_at\n) VALUES (\n  '{{ $json.hotelId }}',\n  '{{ $json.callSid }}',\n  '{{ $json.callerNumber }}',\n  'in_progress',\n  'inbound',\n  'ai',\n  NOW()\n)\nON CONFLICT (twilio_call_sid) DO UPDATE SET\n  status = 'in_progress'\nRETURNING id",
+        "options": {}
+      },
+      "id": "log-initial-call",
+      "name": "Log Initial Call",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [1570, 200],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Creates phone call record in database"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Generate Greeting TwiML').item.json.twimlResponse }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-greeting",
+      "name": "Respond with Greeting",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1790, 200],
+      "notes": "Returns TwiML greeting to Twilio"
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "messages": {
+          "values": [
+            {
+              "content": "You are a language detection and intent classification assistant for hotel phone calls.\n\nAnalyze the following speech transcription and respond with a JSON object containing:\n1. \"language\": detected language code (\"sq\" for Albanian, \"en\" for English, \"it\" for Italian)\n2. \"intent\": the primary intent (room_availability, room_booking, booking_modification, booking_cancellation, price_inquiry, special_pricing, group_reservation, amenities_info, location_directions, check_in_out, complaint, refund_request, human_request, greeting, unknown)\n3. \"confidence\": confidence score from 0.0 to 1.0\n4. \"is_complex\": boolean, true if request requires human\n5. \"wants_human\": boolean, true if caller explicitly asks for human\n6. \"response_text\": appropriate response in detected language (max 100 words, natural spoken style)\n\nComplex requests requiring human:\n- Complaints, refunds, special pricing, group bookings, booking changes\n- Caller sounds angry or frustrated\n- Request is unclear or unusual\n\nHuman request keywords:\n- Albanian: \"recepsionist\", \"njeri\", \"operator\", \"dua të flas me dikë\"\n- English: \"receptionist\", \"human\", \"operator\", \"speak to someone\"\n- Italian: \"receptionist\", \"operatore\", \"persona\", \"parlare con qualcuno\"\n\nRespond ONLY with valid JSON.",
+              "role": "system"
+            },
+            {
+              "content": "=Speech transcription from caller:\n\"{{ $json.speechResult }}\"\n\nTwilio confidence: {{ $json.confidence || 'N/A' }}",
+              "role": "user"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "analyze-speech",
+      "name": "Analyze Speech",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.4,
+      "position": [1350, 400],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-creds",
+          "name": "OpenAI API"
+        }
+      },
+      "notes": "Uses GPT to analyze speech transcription"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse AI analysis and determine action\nconst context = $('Merge Call & Config').item.json;\nconst aiResponse = $input.item.json.message?.content || $input.item.json;\n\nlet analysis;\ntry {\n  analysis = typeof aiResponse === 'string' ? JSON.parse(aiResponse) : aiResponse;\n} catch (e) {\n  analysis = {\n    language: 'en',\n    intent: 'unknown',\n    confidence: 0.5,\n    is_complex: true,\n    wants_human: false,\n    response_text: 'I\\'m sorry, I didn\\'t understand. Let me transfer you to our reception.'\n  };\n}\n\nconst confidenceThreshold = context.confidenceThreshold || 0.75;\nconst needsTransfer = \n  analysis.confidence < confidenceThreshold ||\n  analysis.is_complex === true ||\n  analysis.wants_human === true ||\n  ['complaint', 'refund_request', 'human_request', 'booking_modification',\n   'special_pricing', 'group_reservation', 'unknown'].includes(analysis.intent);\n\n// Transfer messages\nconst transferMessages = {\n  sq: 'Po ju transferoj tek recepsioni. Ju lutem prisni.',\n  en: 'I am transferring you to our reception. Please hold.',\n  it: 'La sto trasferendo alla reception. Attendere prego.'\n};\n\n// Determine voice\nconst voices = {\n  sq: 'Google.sq-AL-Standard-A',\n  en: 'Google.en-US-Standard-C',\n  it: 'Google.it-IT-Standard-A'\n};\n\nconst lang = analysis.language || 'en';\n\nreturn {\n  json: {\n    ...context,\n    speechResult: context.speechResult,\n    detectedLanguage: lang,\n    intent: analysis.intent,\n    confidence: analysis.confidence,\n    isComplex: analysis.is_complex,\n    wantsHuman: analysis.wants_human,\n    responseText: analysis.response_text,\n    needsTransfer: needsTransfer,\n    transferMessage: transferMessages[lang] || transferMessages.en,\n    voice: voices[lang] || voices.en,\n    languageCode: lang === 'sq' ? 'sq-AL' : lang === 'it' ? 'it-IT' : 'en-US'\n  }\n};"
+      },
+      "id": "analyze-voice-handoff",
+      "name": "Analyze Transfer Need",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1570, 400],
+      "notes": "Determines if call should be transferred to human"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.needsTransfer }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "needs-transfer",
+      "name": "Needs Transfer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1790, 400],
+      "notes": "Routes to transfer or AI response"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Generate TwiML for AI response with follow-up\nconst data = $input.item.json;\n\nconst twiml = `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Say language=\"${data.languageCode}\" voice=\"${data.voice}\">\n    ${data.responseText}\n  </Say>\n  <Pause length=\"1\"/>\n  <Gather input=\"speech\" language=\"${data.languageCode}\" speechTimeout=\"3\" action=\"/webhook/twilio-voice-webhook\" method=\"POST\">\n    <Say language=\"${data.languageCode}\" voice=\"${data.voice}\">\n      ${data.detectedLanguage === 'sq' ? 'A ka diçka tjetër që dëshironi të dini?' : \n        data.detectedLanguage === 'it' ? 'C\\'è qualcos\\'altro che vorrebbe sapere?' : \n        'Is there anything else you would like to know?'}\n    </Say>\n  </Gather>\n  <Say language=\"${data.languageCode}\" voice=\"${data.voice}\">\n    ${data.detectedLanguage === 'sq' ? 'Faleminderit që na kontaktuat. Mirupafshim!' : \n      data.detectedLanguage === 'it' ? 'Grazie per averci contattato. Arrivederci!' : \n      'Thank you for calling. Goodbye!'}\n  </Say>\n  <Hangup/>\n</Response>`;\n\nreturn {\n  json: {\n    ...data,\n    twimlResponse: twiml\n  }\n};"
+      },
+      "id": "generate-ai-voice-response",
+      "name": "Generate AI Response TwiML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 500],
+      "notes": "Creates TwiML for AI response with speech recognition for follow-up"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Generate TwiML for transfer to human\nconst data = $input.item.json;\n\nconst twiml = `<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Response>\n  <Say language=\"${data.languageCode}\" voice=\"${data.voice}\">\n    ${data.transferMessage}\n  </Say>\n  <Dial timeout=\"30\" callerId=\"${data.callerNumber}\">\n    <Number>${data.staffPhone}</Number>\n  </Dial>\n  <Say language=\"${data.languageCode}\" voice=\"${data.voice}\">\n    ${data.detectedLanguage === 'sq' ? 'Na vjen keq, linja është e zënë. Ju lutem provoni përsëri më vonë ose dërgoni mesazh në WhatsApp.' : \n      data.detectedLanguage === 'it' ? 'Siamo spiacenti, la linea è occupata. Si prega di riprovare più tardi o di inviare un messaggio WhatsApp.' : \n      'We\\'re sorry, the line is busy. Please try again later or send us a WhatsApp message.'}\n  </Say>\n  <Hangup/>\n</Response>`;\n\nreturn {\n  json: {\n    ...data,\n    twimlResponse: twiml\n  }\n};"
+      },
+      "id": "generate-transfer-twiml",
+      "name": "Generate Transfer TwiML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2010, 300],
+      "notes": "Creates TwiML to transfer call to hotel staff"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegramChatId }}",
+        "text": "=📞 *Incoming Call Transfer*\n\n🏨 *Hotel:* {{ $json.hotelName }}\n📱 *Caller:* {{ $json.callerNumber }}\n🌐 *Language:* {{ $json.detectedLanguage.toUpperCase() }}\n\n💬 *Said:*\n\"{{ $('Merge Call & Config').item.json.speechResult }}\"\n\n🎯 *Intent:* {{ $json.intent }}\n📊 *Confidence:* {{ Math.round($json.confidence * 100) }}%\n\n⚠️ *Reason:* {{ $json.wantsHuman ? 'Caller requested human' : $json.isComplex ? 'Complex request' : 'Low confidence' }}\n\n⏰ *Time:* {{ new Date().toLocaleString() }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "notify-telegram-call",
+      "name": "Notify Staff (Telegram)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [2230, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "telegram-bot-creds",
+          "name": "Hotel Telegram Bot"
+        }
+      },
+      "notes": "Notifies staff about incoming transferred call"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=UPDATE phone_calls SET\n  detected_language = '{{ $json.detectedLanguage }}',\n  handled_by = '{{ $json.needsTransfer ? 'human' : 'ai' }}',\n  transferred_to = {{ $json.needsTransfer ? \"'\" + $json.staffPhone + \"'\" : 'NULL' }},\n  transfer_reason = {{ $json.needsTransfer ? \"'Intent: \" + $json.intent + \", Confidence: \" + $json.confidence + \"'\" : 'NULL' }}\nWHERE twilio_call_sid = '{{ $json.callSid }}'",
+        "options": {}
+      },
+      "id": "update-call-record",
+      "name": "Update Call Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2230, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Updates phone call record with analysis results"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO call_transcripts (\n  call_id, speaker, transcript, detected_language,\n  intent, confidence_score, created_at\n) SELECT \n  id, 'caller', '{{ $('Merge Call & Config').item.json.speechResult.replace(/'/g, \"''\") }}',\n  '{{ $json.detectedLanguage }}', '{{ $json.intent }}', {{ $json.confidence }}, NOW()\nFROM phone_calls WHERE twilio_call_sid = '{{ $json.callSid }}'",
+        "options": {}
+      },
+      "id": "log-transcript",
+      "name": "Log Transcript",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2450, 400],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Saves speech transcript to database"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Analyze Transfer Need').item.json.needsTransfer }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-transfer-for-handoff",
+      "name": "Was Transfer?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2670, 400],
+      "notes": "Check if we need to log handoff event"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO handoff_events (\n  hotel_id, source_type, source_id, reason, reason_details,\n  confidence_score, intent, customer_phone, customer_language,\n  conversation_summary, notification_sent, notification_channels,\n  status, created_at\n) SELECT\n  '{{ $('Analyze Transfer Need').item.json.hotelId }}',\n  'phone_call',\n  id,\n  '{{ $('Analyze Transfer Need').item.json.wantsHuman ? 'user_requested' : $('Analyze Transfer Need').item.json.isComplex ? 'complex_request' : 'low_confidence' }}',\n  'Call transferred to {{ $('Analyze Transfer Need').item.json.staffPhone }}',\n  {{ $('Analyze Transfer Need').item.json.confidence }},\n  '{{ $('Analyze Transfer Need').item.json.intent }}',\n  '{{ $('Analyze Transfer Need').item.json.callerNumber }}',\n  '{{ $('Analyze Transfer Need').item.json.detectedLanguage }}',\n  '{{ $('Merge Call & Config').item.json.speechResult.replace(/'/g, \"''\").substring(0, 500) }}',\n  true,\n  '[\"telegram\"]',\n  'pending',\n  NOW()\nFROM phone_calls WHERE twilio_call_sid = '{{ $('Analyze Transfer Need').item.json.callSid }}'",
+        "options": {}
+      },
+      "id": "log-call-handoff",
+      "name": "Log Call Handoff",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.3,
+      "position": [2890, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-hotel-db",
+          "name": "Hotel PostgreSQL"
+        }
+      },
+      "notes": "Records call transfer event"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Generate Transfer TwiML').item.json.twimlResponse || $('Generate AI Response TwiML').item.json.twimlResponse }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/xml"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-final",
+      "name": "Respond with TwiML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [3110, 400],
+      "notes": "Returns final TwiML response to Twilio"
+    },
+    {
+      "parameters": {},
+      "id": "noop-no-transfer",
+      "name": "No Transfer Handoff",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [2890, 500],
+      "notes": "Continue without logging handoff"
+    }
+  ],
+  "connections": {
+    "Twilio Voice Webhook": {
+      "main": [
+        [
+          {
+            "node": "Parse Call Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Call Data": {
+      "main": [
+        [
+          {
+            "node": "Get Hotel Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Hotel Config": {
+      "main": [
+        [
+          {
+            "node": "Merge Call & Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Call & Config": {
+      "main": [
+        [
+          {
+            "node": "Is Initial Call?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Initial Call?": {
+      "main": [
+        [
+          {
+            "node": "Generate Greeting TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Analyze Speech",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Greeting TwiML": {
+      "main": [
+        [
+          {
+            "node": "Log Initial Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Initial Call": {
+      "main": [
+        [
+          {
+            "node": "Respond with Greeting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Speech": {
+      "main": [
+        [
+          {
+            "node": "Analyze Transfer Need",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Transfer Need": {
+      "main": [
+        [
+          {
+            "node": "Needs Transfer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Transfer?": {
+      "main": [
+        [
+          {
+            "node": "Generate Transfer TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate AI Response TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Transfer TwiML": {
+      "main": [
+        [
+          {
+            "node": "Notify Staff (Telegram)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Update Call Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate AI Response TwiML": {
+      "main": [
+        [
+          {
+            "node": "Update Call Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Staff (Telegram)": {
+      "main": []
+    },
+    "Update Call Record": {
+      "main": [
+        [
+          {
+            "node": "Log Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Transcript": {
+      "main": [
+        [
+          {
+            "node": "Was Transfer?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Was Transfer?": {
+      "main": [
+        [
+          {
+            "node": "Log Call Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Transfer Handoff",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Call Handoff": {
+      "main": [
+        [
+          {
+            "node": "Respond with TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Transfer Handoff": {
+      "main": [
+        [
+          {
+            "node": "Respond with TwiML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "",
+    "timezone": "Europe/Tirane"
+  },
+  "staticData": null,
+  "meta": {
+    "templateId": "hotel-phone-automation",
+    "instanceId": ""
+  },
+  "pinData": {},
+  "tags": [
+    {
+      "name": "hotel-automation"
+    },
+    {
+      "name": "phone"
+    },
+    {
+      "name": "twilio"
+    }
+  ]
+}
